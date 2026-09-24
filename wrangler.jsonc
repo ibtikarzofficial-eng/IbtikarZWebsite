@@ -2,6 +2,19 @@
   "name": "ibtikarzwebsite",
   "main": "worker/index.js",
   "compatibility_date": "2026-09-24",
+
+  "vars": {
+    "LEAD_FROM_EMAIL": "IbtikarZ Leads <leads@mail.ibtikarz.com>",
+    "LEAD_TO_EMAIL": "abdullah@ibtikarz.com"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "LEADS_DB",
+      "database_id": "3484b64d-5d2a-4481-93af-64b85d964b76"
+    }
+  ],
+
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
