@@ -1,0 +1,20 @@
+const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store"}});
+const clean=(v,max=5000)=>String(v??"").replace(/[\u0000-\u001F\u007F]/g," ").trim().slice(0,max);
+async function verifyTurnstile(secret,token,ip){if(!secret)return {success:true,skipped:true};if(!token)return {success:false};const body=new URLSearchParams({secret,response:token});if(ip)body.set('remoteip',ip);const r=await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify',{method:'POST',body});return r.json();}
+export async function onRequestPost(context){
+  try{
+    const req=context.request; const ct=req.headers.get('content-type')||''; let body;
+    if(ct.includes('application/json')) body=await req.json(); else body=Object.fromEntries((await req.formData()).entries());
+    if(clean(body.company_fax,200)) return json({ok:true});
+    const name=clean(body.name,120), email=clean(body.email,180), website=clean(body.website,400), details=clean(body.project_details,6000);
+    if(!name||!email||!/^\S+@\S+\.\S+$/.test(email)||!details) return json({error:'Please complete the required fields.'},400);
+    const ip=req.headers.get('CF-Connecting-IP')||''; const turn=await verifyTurnstile(context.env.TURNSTILE_SECRET_KEY,clean(body['cf-turnstile-response'],2200),ip);if(!turn.success)return json({error:'Human verification failed. Please retry.'},400);
+    const lead={id:clean(body.lead_id,100)||crypto.randomUUID(),created_at:new Date().toISOString(),name,email,website,service:clean(body.service,180)||clean(body.lead_type,180),budget:clean(body.budget,120),timeline:clean(body.timeline,120),details,landing_page:clean(body.landing_page,700),conversion_page:clean(body.conversion_page,700),referrer:clean(body.referrer,700),utm_source:clean(body.utm_source,200),utm_medium:clean(body.utm_medium,200),utm_campaign:clean(body.utm_campaign,200),utm_term:clean(body.utm_term,200),utm_content:clean(body.utm_content,200),country:req.cf?.country||'',user_agent:clean(req.headers.get('user-agent'),500)};
+    if(context.env.LEADS_DB){await context.env.LEADS_DB.prepare(`INSERT INTO leads (id,created_at,name,email,website,service,budget,timeline,details,landing_page,conversion_page,referrer,utm_source,utm_medium,utm_campaign,utm_term,utm_content,country,user_agent) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(lead.id,lead.created_at,lead.name,lead.email,lead.website,lead.service,lead.budget,lead.timeline,lead.details,lead.landing_page,lead.conversion_page,lead.referrer,lead.utm_source,lead.utm_medium,lead.utm_campaign,lead.utm_term,lead.utm_content,lead.country,lead.user_agent).run();}
+    if(context.env.RESEND_API_KEY){const text=`New IbtikarZ lead\n\nName: ${lead.name}\nEmail: ${lead.email}\nWebsite: ${lead.website}\nService: ${lead.service}\nBudget: ${lead.budget}\nTimeline: ${lead.timeline}\nCountry: ${lead.country}\n\nDetails:\n${lead.details}\n\nLanding: ${lead.landing_page}\nReferrer: ${lead.referrer}\nUTM source: ${lead.utm_source}\nUTM campaign: ${lead.utm_campaign}\nLead ID: ${lead.id}`;await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${context.env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:context.env.LEAD_FROM_EMAIL||'IbtikarZ Leads <leads@ibtikarz.com>',to:[context.env.LEAD_TO_EMAIL||'abdullah@ibtikarz.com'],reply_to:lead.email,subject:`New IbtikarZ lead — ${lead.service||'website enquiry'}`,text})});}
+    if(context.env.LEAD_WEBHOOK_URL){context.waitUntil(fetch(context.env.LEAD_WEBHOOK_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(lead)}));}
+    if(!context.env.LEADS_DB&&!context.env.RESEND_API_KEY&&!context.env.LEAD_WEBHOOK_URL)return json({error:'Lead backend is not configured yet.'},503);
+    return json({ok:true,lead_id:lead.id});
+  }catch(e){return json({error:'Could not submit this request right now.'},500)}
+}
+export function onRequest(){return json({error:'Method not allowed'},405)}
